@@ -2,7 +2,8 @@ etc
 .DS_Store
 .*.py
 saintsbury
-
+*.dc
+data
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
