@@ -1,5 +1,7 @@
 etc
-
+.DS_Store
+.*.py
+saintsbury
 
 
 # Byte-compiled / optimized / DLL files
