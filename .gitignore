@@ -1,3 +1,5 @@
+dev_*
+data.*
 etc
 .DS_Store
 .*.py
