@@ -1,5 +1,5 @@
 dev_*
-data.*
+*.pkl
 etc
 .DS_Store
 .*.py
