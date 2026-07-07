@@ -355,12 +355,14 @@ def part_path(idx):
 
 
 def run(chunk_size, limit, restart, concat_only):
-    prosodic, TextModel, constraints = import_prosodic()
-    print(f"prosodic: {prosodic.__file__}")
-    print(f"constraints ({len(constraints)}): {', '.join(constraints)}")
     os.makedirs(PARTS_DIR, exist_ok=True)
 
     if not concat_only:
+        # import prosodic only when actually parsing — concat-only just reads
+        # the parquet parts and needs no parser (nor the by='line' capability).
+        prosodic, TextModel, constraints = import_prosodic()
+        print(f"prosodic: {prosodic.__file__}")
+        print(f"constraints ({len(constraints)}): {', '.join(constraints)}")
         reader = pd.read_csv(IN_PATH, sep="\t", low_memory=False, chunksize=chunk_size)
         seen = 0
         t0 = time.time()
@@ -395,8 +397,22 @@ def run(chunk_size, limit, restart, concat_only):
         return
     print(f"concatenating {len(parts)} parts ...")
     full = pd.concat((pd.read_parquet(p) for p in parts), ignore_index=True)
-    full.to_parquet(OUT_PARQUET, index=False)
+
+    # Parts are dtype-inferred per chunk, so a column can disagree across parts
+    # and concat to a mixed-type `object` column pyarrow can't serialize — e.g.
+    # `id` is int64 in an all-numeric-id chunk and str elsewhere. Normalize:
+    # the recomputed flags -> nullable boolean, every remaining object column
+    # (identifiers, text, meter/stress strings) -> nullable string. Numeric
+    # columns (int64/float64) are left untouched.
+    for c in ("is_parsed", "is_iambic_pentameter_best", "is_iambic_pentameter_any"):
+        if c in full.columns:
+            full[c] = full[c].astype("boolean")
+    for c in full.select_dtypes(include="object").columns:
+        full[c] = full[c].astype("string")
+
+    # TSV first (the primary, always-serializable deliverable), then parquet.
     full.to_csv(OUT_TSV, sep="\t", index=False)
+    full.to_parquet(OUT_PARQUET, index=False)
     print(f"wrote {len(full):,} rows:\n  {OUT_TSV}\n  {OUT_PARQUET}")
     n_parsed = int(full["is_parsed"].fillna(False).sum()) if "is_parsed" in full else 0
     print(f"parsed: {n_parsed:,} / {len(full):,} "
