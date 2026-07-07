@@ -57,6 +57,7 @@ NOTE: the first run phonemizes any words not yet in prosodic's espeak cache
 import argparse
 import gc
 import os
+import re
 import sys
 import time
 
@@ -80,6 +81,19 @@ PARTS_DIR = os.path.join(DATA_DIR, "_reparse_parts")  # per-chunk parquet parts
 
 TEXT_COL = "prosodic_line"     # the line to re-parse
 CHUNK_DEFAULT = 4000           # rows per chunk / part
+
+# The 2020 prosodic_line values embed v1's tokenization, which split clitics and
+# possessives with a space ("do n't", "is n't", "navy' s"). Current prosodic
+# then tokenizes/pronounces those fragments wrongly. Rejoin them to grammatical
+# forms before parsing. A leading orphan clitic ("n't ..." with its host sliced
+# off by the 10-syllable windowing) has no host and is left untouched.
+_CLITIC_RE = re.compile(r"(\w)\s+(n't|'s|'re|'ve|'ll|'d|'m)\b")   # do n't -> don't
+_APOS_SPACE_RE = re.compile(r"(\w)'\s+(s|re|ve|ll|d|m|t)\b")       # navy' s -> navy's
+
+
+def normalize_clitics(s):
+    """Rejoin space-split clitics/possessives in a source line."""
+    return _APOS_SPACE_RE.sub(r"\1'\2", _CLITIC_RE.sub(r"\1\2", s))
 
 # Metadata + identity columns carried through verbatim. Everything NOT listed
 # here is prosodic-derived and gets recomputed (old prosodic columns are dropped).
@@ -330,7 +344,14 @@ def process_chunk(cdf, TextModel, constraints, offset=0):
     """
     keep = cdf[[c for c in PASSTHROUGH_COLS if c in cdf.columns]].reset_index(drop=True)
     keep.insert(0, "orig_row", list(range(offset, offset + len(cdf))))
-    texts = cdf[TEXT_COL].fillna("").map(lambda s: str(s).strip()).reset_index(drop=True)
+    # rejoin v1's space-split clitics/possessives before parsing; store the
+    # cleaned text as prosodic_line so the output is self-consistent (the 2020
+    # original is always recoverable via orig_row).
+    texts = (cdf[TEXT_COL].fillna("")
+             .map(lambda s: normalize_clitics(str(s).strip()))
+             .reset_index(drop=True))
+    if "prosodic_line" in keep.columns:
+        keep["prosodic_line"] = texts.values
     nonblank_pos = texts[texts.str.len() > 0].index.tolist()
 
     recomputed = pd.DataFrame(index=range(len(cdf)))
